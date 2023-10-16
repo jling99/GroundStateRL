@@ -63,7 +63,7 @@ class SpinEnv(gym.Env):
         for i in range(self.reps):
             j = np.random.randint(0,self.size)
             
-            if self.site_energy[rep, j]< -np.log(np.random.uniform(0,1))/(2*self.beta):
+            if self.site_energy[rep, j]< -np.log(np.random.uniform(0,1))/(2*self.beta[j]):
                 self.flip(rep,j)
 
     def init_lattice(self):
