@@ -23,9 +23,8 @@ class SpinEnv(gym.Env):
         self.lattice = self.init_lattice()
         self.beta = self.init_beta()
         self.site_energy = self.calc_energy()
-        self.step = 0
-        pass
-    
+        self.episode = 0
+
     def step(self, action):
         
         if self.beta[0] + action < 1e-5 : 
@@ -35,13 +34,13 @@ class SpinEnv(gym.Env):
             self.beta[i] =+ action/self.sweeps
             self.sweep(i)
             
-        self.step +=1
+        self.episode +=1
                 
         observation = self._get_obs()
         reward = 0
         done = False
                 
-        if self.step >= self.stop:
+        if self.episode >= self.stop:
             done = True
             reward = self.site_energy.sum(axis=1).max()
         
