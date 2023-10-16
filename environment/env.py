@@ -19,13 +19,18 @@ class SpinEnv(gym.Env):
         
     def _get_obs(self):
         return self.lattice  
+    
+    def _get_info(self):
+        return {'beta' : self.beta[0],
+                'min_enery' : -self.site_rel_energy.sum(axis=1).min(),
+                'step' : self.steps}
         
     def reset(self):
         self.lattice = self.init_lattice()
         self.beta = self.init_beta()
         self.site_rel_energy = self.calc_rel_energy()
         self.site_energy = self.calc_energy()
-        self.episode = 0
+        self.steps = 0
 
     def step(self, action):
         
@@ -36,17 +41,18 @@ class SpinEnv(gym.Env):
             self.beta[i] =+ action
             self.sweep(i)
             
-        self.episode +=1
+        self.steps +=1
                 
         observation = self._get_obs()
         reward = 0
         done = False
+        info = self._get_info()
                 
-        if self.episode >= self.stop:
+        if self.steps >= self.stop:
             done = True
             reward = -self.site_rel_energy.sum(axis=1).min()
-        
-        return observation, reward, done, False, {}                
+
+        return observation, reward, done, False, info              
     
     def flip(self, rep, site):
         self.lattice[rep, site] *=-1
