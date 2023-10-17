@@ -11,7 +11,7 @@ class CFG():
 
         self.GAMMA = 0.5
         self.REPLAY_SIZE = 2048*64*64*64
-        self.LEARNING_RATE = 2*1e-3
+        self.LEARNING_RATE = 5*1e-4
 
         self.ENTROPY_BETA= 0.25
         self.REWARD_STEPS = 1
