@@ -15,6 +15,8 @@ class CFG():
 
         self.ENTROPY_BETA= 0.25
         self.REWARD_STEPS = 1
+        self.CLIP = 0.2
 
         self.N_GAMES = 50000
         self.DISPLAY_TIME = 1000
+        self.EPOCHS = 100

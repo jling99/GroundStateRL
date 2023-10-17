@@ -18,10 +18,10 @@ class Net(nn.Module):
     def __init__(self, input_shape):
         super(Net, self).__init__()
         
-        self.conv_spin = nn.Conv1d(input_shape[1], cfg.CONV_SPIN_KERNEL)
-        self.conv_rep = nn.Conv1d(input_shape[2], cfg.CONV_REP_KERNEL)
+        self.conv_spin = nn.Conv1d(input_shape[0], cfg.CONV_SPIN_KERNEL)
+        self.conv_rep = nn.Conv1d(input_shape[1], cfg.CONV_REP_KERNEL)
         
-        self.dense = nn.Linear(cfg.CONV_REP_KERNEL*input_shape[1] + cfg.CONV_SPIN_KERNEL*input_shape[2], cfg.DENSE_HIDDEN)
+        self.dense = nn.Linear(cfg.CONV_REP_KERNEL*input_shape[0] + cfg.CONV_SPIN_KERNEL*input_shape[1], cfg.DENSE_HIDDEN)
         
         self.lstm = nn.LSTM(cfg.DENSE_HIDDEN,cfg.LSTM_SIZE)
         
@@ -50,7 +50,14 @@ class Agent():
         self.buffer = buffer
         self.net = Net(env.observation_space.shape[0])
         self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.LEARNING_RATE) #weight_decay = 1e-5
+        
         self.beta = cfg.ENTROPY_BETA
+        self.clip = cfg.CLIP
+        
+        self.net_old = Net(env.observation_space.shape[0])
+        self.net_old.load_state_dict(self.net.state_dict())
+        
+        self.epochs = cfg.EPOCHS
         
     def step(self, state, action, reward, done, next_state, info):
             
@@ -58,8 +65,9 @@ class Agent():
         self.buffer.append(exp)
         
     def choose(self, state):
-        state_action_mu, state_action_std,_ = self.net(torch.tensor(state, dtype=torch.float32))
-        action = np.random.normal(state_action_mu.detach().numpy()[0,0], state_action_std.detach().numpy()[0,0],)
+        with torch.no_grad():
+            state_action_mu, state_action_std,_ = self.net(torch.tensor(state, dtype=torch.float32))
+            action = np.random.normal(state_action_mu.detach().numpy()[0,0], state_action_std.detach().numpy()[0,0])
         return action
 
     def learn(self):
@@ -68,12 +76,47 @@ class Agent():
         states_v = torch.tensor(states, dtype=torch.float32)
         actions_v = torch.tensor(actions, dtype=torch.float32)
         rewards_v = torch.tensor(rewards, dtype=torch.float32)
+        rewards_v = (rewards_v - rewards_v.mean()) / (rewards_v.std() + 1e-7)
         
-        state_action_mu, state_action_std, state_action_val = self.net(states_v)
+        state_old_mu, state_old_std, state_old_val = self.net_old(states_v)
+        old_logprobs = self.logprob(state_old_mu, state_old_std, actions_v)
         
-        advantage = (-state_action_val[dones].squeeze(-1)+rewards_v[dones]).unsqueeze(-1)
+        advantages = (-state_old_val[dones].squeeze(-1)+rewards_v[dones]).unsqueeze(-1)
         
-        loss_value_v = F.mse_loss(state_action_val.squeeze(-1), rewards_v) #or l1_loss
-        self.optimizer.zero_grad()
+        for _ in range(self.epochs):
+            
+            state_action_mu, state_action_std, state_action_val = self.net(states_v)
+            
+            loss_value_v = F.mse_loss(state_action_val.squeeze(-1), rewards_v)
+            
+            # Evaluating old actions and values
+            logprobs = self.logprob(state_action_mu, state_action_std, actions_v)
+            
+            # Finding the ratio (pi_theta / pi_theta__old)
+            ratios = torch.exp(logprobs - old_logprobs)
+
+            # Finding Surrogate Loss  
+            surr1 = ratios * advantages
+            surr2 = torch.clamp(ratios, 1-self.clip, 1+self.clip) * advantages
+
+            loss_entropy = self.beta*(-(torch.log(2*np.pi*state_action_std.clamp(min=0.1))+1)/2).mean()
+            
+            # final loss of clipped objective PPO
+            loss_policy_v = -torch.min(surr1, surr2) + 0.5 * nn.MseLoss()(state_action_val, rewards_v) 
+            
+            loss = loss_entropy + loss_policy_v + loss_value_v
+            
+            # take gradient step
+            self.optimizer.zero_grad()
+            loss.mean().backward()
+            self.optimizer.step()
+            
+        self.net_old.load_state_dict(self.net.state_dict())
+        self.buffer.buffer.clear()
+            
+    def logprob(self, mu, std, action):
+        a = ((mu.clamp(-1,1)-action)**2)/(2*std.clamp(min=0.1))
+        b = torch.log(torch.sqrt(2*np.pi*std.clamp(min=0.1)))
+        return a-b
         
         
