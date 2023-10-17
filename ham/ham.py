@@ -21,7 +21,6 @@ def random_hamiltonian(size):
             all_links[k] = c
         else : 
             for i in range (k-1, -1,-1):
-                print('sub ',i )
                 for j in links[i]:
                     if k == j[0]:
                         c.append((i, j[1]))

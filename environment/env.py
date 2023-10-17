@@ -6,7 +6,7 @@ import numpy as np
 
 class SpinEnv(gym.Env):
     
-    def __init__(self, ham, size=16, reps=64, steps = 10000, beta = 1):
+    def __init__(self, ham, size=16, reps=64, steps = 500, beta = 1):
         self.size = size
         self.reps = reps
         self.action_space = spaces.Box(low=-1, high=1, shape=(1,))
@@ -15,6 +15,7 @@ class SpinEnv(gym.Env):
         self.all_links = ham[1]
         self.stop = steps
         self.start_beta = beta
+        self.sweeps = int(size*0.5)
 
         
     def _get_obs(self):
@@ -31,6 +32,9 @@ class SpinEnv(gym.Env):
         self.site_rel_energy = self.calc_rel_energy()
         self.site_energy = self.calc_energy()
         self.steps = 0
+        self.flips = 0
+        
+        return self._get_obs()
 
     def step(self, action):
         
@@ -38,39 +42,39 @@ class SpinEnv(gym.Env):
             action = 0
             
         for i in range (self.reps):
-            self.beta[i] =+ action
+            self.beta[i] += action
             self.sweep(i)
             
         self.steps +=1
-                
         observation = self._get_obs()
         reward = 0
         done = False
         info = self._get_info()
-                
+        
+        
         if self.steps >= self.stop:
             done = True
+            
             reward = -self.site_rel_energy.sum(axis=1).min()
 
         return observation, reward, done, False, info              
     
     def flip(self, rep, site):
         self.lattice[rep, site] *=-1
-        self.site_rel_energy = self.calc_rel_energy()
         self.site_energy = self.calc_energy()
 
     def sweep(self, rep):
-        for i in range(self.reps):
-            j = np.random.randint(0,self.size)
-            
-            if self.site_energy[rep, j]< -np.log(np.random.uniform(0,1))/(2*self.beta[j]):
-                self.flip(rep,j)
+        r = np.random.randint(0,self.size, self.size)
+        for i in r:
+            if self.site_energy[rep, i]< -np.log(np.random.uniform(0,1))/(2*self.beta[rep]):
+                self.flips+=1
+                self.flip(rep,i)
 
     def init_lattice(self):
         return np.random.choice([-1,1],(self.reps, self.size))
     
     def init_beta(self):
-        self.beta = np.ones(self.reps)*self.start_beta
+        return np.ones(self.reps)*self.start_beta
     
     def calc_rel_energy(self):
         

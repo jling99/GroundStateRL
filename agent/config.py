@@ -4,6 +4,9 @@ class CFG():
 
         self.CONV_SPIN_KERNEL = 64
         self.CONV_REP_KERNEL = 64
+
+        self.SIZE_SPIN_KERNEL = 4
+        self.SIZE_REP_KERNEL = 4
         
         self.DENSE_HIDDEN = 64
         self.DROPOUT_RATE = .2
@@ -17,6 +20,7 @@ class CFG():
         self.REWARD_STEPS = 1
         self.CLIP = 0.2
 
-        self.N_GAMES = 50000
+        self.N_GAMES = 500
         self.DISPLAY_TIME = 1000
-        self.EPOCHS = 100
+        self.EPOCHS = 50
+        self.SYNC = 25

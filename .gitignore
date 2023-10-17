@@ -162,3 +162,5 @@ cython_debug/
 #jupyter notebook
 
 *.ipynb
+models
+*.pt
