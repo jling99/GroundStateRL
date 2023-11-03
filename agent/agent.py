@@ -17,9 +17,9 @@ cfg = CFG()
 class NetRnn(nn.Module):
     def __init__(self, input_shape):
         super(NetRnn, self).__init__()
-        
-        self.conv_spin = nn.Conv1d(input_shape[0], cfg.CONV_SPIN_KERNEL)
-        self.conv_rep = nn.Conv1d(input_shape[1], cfg.CONV_REP_KERNEL)
+
+        self.conv_spin = nn.Conv1d(input_shape[0], cfg.CONV_SPIN_KERNEL, input_shape[0], padding='same')
+        self.conv_rep = nn.Conv1d(input_shape[1], cfg.CONV_REP_KERNEL, input_shape[1], padding='same')
         
         self.dense = nn.Linear(cfg.CONV_REP_KERNEL*input_shape[0] + cfg.CONV_SPIN_KERNEL*input_shape[1], cfg.DENSE_HIDDEN)
         
@@ -32,60 +32,64 @@ class NetRnn(nn.Module):
     def forward(self, x):
         x_spin = x
         x_spin = self.conv_spin(x_spin)
-        x_spin = nn.Flatten()(x_spin)
-        
+        x_spin = x_spin.reshape(x_spin.shape[0],-1)
+
         x_reps = torch.transpose(x,1,2)
         x_reps = self.conv_rep(x_reps)
-        x_reps = nn.Flatten()(x_reps)
+        x_reps = x_reps.reshape(x_reps.shape[0],-1)
         
-        x_cat = torch.cat((x_spin, x_reps),0)
-        x_lin = F.relu(self.dense(x_cat))
-        x_rnn = F.relu(self.lstm(x_lin))
+        x_cat = torch.cat((x_spin, x_reps),1)
+        x_cat = F.relu(self.dense(x_cat))
+
+        x_rnn, _= F.relu(self.lstm(x_cat))
         
         return F.tanh(self.mu(x_rnn)), F.relu(self.std(x_rnn)), self.value(x_rnn)
     
 class NetConv(nn.Module):
     def __init__(self, input_shape):
         super(NetConv, self).__init__()
-        print(input_shape)
-        
-        self.conv_spin = nn.Conv1d(input_shape[0], cfg.CONV_SPIN_KERNEL)
-        self.conv_rep = nn.Conv1d(input_shape[1], cfg.CONV_REP_KERNEL)
+
+        self.conv_spin = nn.Conv1d(input_shape[0], cfg.CONV_SPIN_KERNEL, cfg.SIZE_SPIN_KERNEL, padding='same')
+        self.conv_rep = nn.Conv1d(input_shape[1], cfg.CONV_REP_KERNEL, cfg.SIZE_REP_KERNEL, padding='same')
         
         self.dense = nn.Linear(cfg.CONV_REP_KERNEL*input_shape[0] + cfg.CONV_SPIN_KERNEL*input_shape[1], cfg.DENSE_HIDDEN)
         
-        self.lin = nn.Linear(cfg.DENSE_HIDDEN,cfg.LSTM_SIZE)
+        self.linear = nn.Linear(cfg.DENSE_HIDDEN,cfg.DENSE_HIDDEN)
         
-        self.mu = nn.Linear(cfg.LSTM_SIZE, 1)
-        self.std = nn.Linear(cfg.LSTM_SIZE, 1)
-        self.value = nn.Linear(cfg.LSTM_SIZE, 1)
+        self.mu = nn.Linear(cfg.DENSE_HIDDEN, 1)
+        self.std = nn.Linear(cfg.DENSE_HIDDEN, 1)
+        self.value = nn.Linear(cfg.DENSE_HIDDEN, 1)
         
     def forward(self, x):
         x_spin = x
         x_spin = self.conv_spin(x_spin)
-        x_spin = nn.Flatten()(x_spin)
-        
+        x_spin = x_spin.reshape(x_spin.shape[0],-1)
+
         x_reps = torch.transpose(x,1,2)
         x_reps = self.conv_rep(x_reps)
-        x_reps = nn.Flatten()(x_reps)
+        x_reps = x_reps.reshape(x_reps.shape[0],-1)
         
-        x_cat = torch.cat((x_spin, x_reps),0)
-        x_lin = F.relu(self.dense(x_cat))
-        x_rnn = F.relu(self.lin(x_lin))
+        x_cat = torch.cat((x_spin, x_reps),1)
+        x_cat = F.relu(self.dense(x_cat))
+
+        x_l= F.relu(self.linear(x_cat))
         
-        return F.tanh(self.mu(x_rnn)), F.relu(self.std(x_rnn)), self.value(x_rnn)
+        return F.tanh(self.mu(x_l)), F.relu(self.std(x_l)), self.value(x_l)
     
     
 class Agent():
-    def __init__(self, env, buffer, type='conv') -> None:
+    def __init__(self, env, buffer, recurrent = True) -> None:
+        
         self.env = env
         self.buffer = buffer
-        if type == 'conv':
-            self.net = NetConv(env.observation_space.shape)
-            self.net_old = NetConv(env.observation_space.shape)
-        if type == 'rnn':
+        
+        if recurrent:
             self.net = NetRnn(env.observation_space.shape)
             self.net_old = NetRnn(env.observation_space.shape)
+        else :
+            self.net = NetConv(env.observation_space.shape)
+            self.net_old = NetConv(env.observation_space.shape)
+        
         self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.LEARNING_RATE) #weight_decay = 1e-5
         
         self.beta = cfg.ENTROPY_BETA
@@ -103,47 +107,45 @@ class Agent():
         
     def choose(self, state):
         with torch.no_grad():
-            state_action_mu, state_action_std,_ = self.net(torch.tensor(state, dtype=torch.float32))
+            state_action_mu, state_action_std,_ = self.net(torch.tensor(state, dtype=torch.float32).unsqueeze(0))
             action = np.random.normal(state_action_mu.detach().numpy()[0,0], state_action_std.detach().numpy()[0,0])
         return action
 
     def learn(self):
-
-        states, actions, rewards, dones = self.buffer.sample(self.net)
-        states_v = torch.tensor(states, dtype=torch.float32)
-        actions_v = torch.tensor(actions, dtype=torch.float32)
-        rewards_v = torch.tensor(rewards, dtype=torch.float32)
-        rewards_v = (rewards_v - rewards_v.mean()) / (rewards_v.std() + 1e-7)
-        
-        state_old_mu, state_old_std, state_old_val = self.net_old(states_v)
-        old_logprobs = self.logprob(state_old_mu, state_old_std, actions_v)
-        
-        advantages = (-state_old_val[dones].squeeze(-1)+rewards_v[dones]).unsqueeze(-1)
-        
-        for _ in range(self.epochs):
+        with torch.no_grad():
+            states, actions, rewards, dones = self.buffer.sample(self.net)
+            states_v = torch.tensor(states, dtype=torch.float32)
+            actions_v = torch.tensor(actions, dtype=torch.float32)
+            rewards_v = torch.tensor(rewards, dtype=torch.float32)
+            rewards_v = (rewards_v - rewards_v.mean()) 
+            dones_v = torch.tensor(dones, dtype=torch.bool)
             
+            state_old_mu, state_old_std, state_old_val = self.net_old(states_v)
+            
+            old_logprobs = self.logprob(state_old_mu, state_old_std, actions_v)
+            
+            advantages = (-state_old_val[dones_v].squeeze(-1)+rewards_v[dones_v]).unsqueeze(-1)
+
+        for _ in range(self.epochs):
+
             state_action_mu, state_action_std, state_action_val = self.net(states_v)
             
-            loss_value_v = F.mse_loss(state_action_val.squeeze(-1), rewards_v)
-            
-            # Evaluating old actions and values
-            logprobs = self.logprob(state_action_mu, state_action_std, actions_v)
-            
-            # Finding the ratio (pi_theta / pi_theta__old)
-            ratios = torch.exp(logprobs - old_logprobs)
 
-            # Finding Surrogate Loss  
-            surr1 = ratios * advantages
-            surr2 = torch.clamp(ratios, 1-self.clip, 1+self.clip) * advantages
+            
+            with torch.no_grad():
+                logprobs = self.logprob(state_action_mu, state_action_std, actions_v)
 
+                ratios = torch.exp(logprobs - old_logprobs)[dones_v]
+
+                surr1 = ratios * advantages
+                surr2 = torch.clamp(ratios, 1-self.clip, 1+self.clip) * advantages
+                
             loss_entropy = self.beta*(-(torch.log(2*np.pi*state_action_std.clamp(min=0.1))+1)/2).mean()
             
-            # final loss of clipped objective PPO
-            loss_policy_v = -torch.min(surr1, surr2) + 0.5 * nn.MseLoss()(state_action_val, rewards_v) 
+            loss_policy_v = -torch.min(surr1, surr2) + nn.MSELoss()(state_action_val.squeeze(-1), rewards_v) 
             
-            loss = loss_entropy + loss_policy_v + loss_value_v
-            
-            # take gradient step
+            loss = loss_entropy + loss_policy_v 
+
             self.optimizer.zero_grad()
             loss.mean().backward()
             self.optimizer.step()
