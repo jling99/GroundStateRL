@@ -20,3 +20,5 @@ class CFG():
         self.N_GAMES = 50000
         self.DISPLAY_TIME = 1000
         self.EPOCHS = 100
+        
+        self.net = 'conv'

@@ -14,9 +14,9 @@ from agent.buffer import Experience
 
 cfg = CFG()
 
-class Net(nn.Module):
+class NetRnn(nn.Module):
     def __init__(self, input_shape):
-        super(Net, self).__init__()
+        super(NetRnn, self).__init__()
         
         self.conv_spin = nn.Conv1d(input_shape[0], cfg.CONV_SPIN_KERNEL)
         self.conv_rep = nn.Conv1d(input_shape[1], cfg.CONV_REP_KERNEL)
@@ -39,22 +39,59 @@ class Net(nn.Module):
         x_reps = nn.Flatten()(x_reps)
         
         x_cat = torch.cat((x_spin, x_reps),0)
-        x_rnn = self.lstm(x_cat)
+        x_lin = F.relu(self.dense(x_cat))
+        x_rnn = F.relu(self.lstm(x_lin))
+        
+        return F.tanh(self.mu(x_rnn)), F.relu(self.std(x_rnn)), self.value(x_rnn)
+    
+class NetConv(nn.Module):
+    def __init__(self, input_shape):
+        super(NetConv, self).__init__()
+        print(input_shape)
+        
+        self.conv_spin = nn.Conv1d(input_shape[0], cfg.CONV_SPIN_KERNEL)
+        self.conv_rep = nn.Conv1d(input_shape[1], cfg.CONV_REP_KERNEL)
+        
+        self.dense = nn.Linear(cfg.CONV_REP_KERNEL*input_shape[0] + cfg.CONV_SPIN_KERNEL*input_shape[1], cfg.DENSE_HIDDEN)
+        
+        self.lin = nn.Linear(cfg.DENSE_HIDDEN,cfg.LSTM_SIZE)
+        
+        self.mu = nn.Linear(cfg.LSTM_SIZE, 1)
+        self.std = nn.Linear(cfg.LSTM_SIZE, 1)
+        self.value = nn.Linear(cfg.LSTM_SIZE, 1)
+        
+    def forward(self, x):
+        x_spin = x
+        x_spin = self.conv_spin(x_spin)
+        x_spin = nn.Flatten()(x_spin)
+        
+        x_reps = torch.transpose(x,1,2)
+        x_reps = self.conv_rep(x_reps)
+        x_reps = nn.Flatten()(x_reps)
+        
+        x_cat = torch.cat((x_spin, x_reps),0)
+        x_lin = F.relu(self.dense(x_cat))
+        x_rnn = F.relu(self.lin(x_lin))
         
         return F.tanh(self.mu(x_rnn)), F.relu(self.std(x_rnn)), self.value(x_rnn)
     
     
 class Agent():
-    def __init__(self, env, buffer) -> None:
+    def __init__(self, env, buffer, type='conv') -> None:
         self.env = env
         self.buffer = buffer
-        self.net = Net(env.observation_space.shape[0])
+        if type == 'conv':
+            self.net = NetConv(env.observation_space.shape)
+            self.net_old = NetConv(env.observation_space.shape)
+        if type == 'rnn':
+            self.net = NetRnn(env.observation_space.shape)
+            self.net_old = NetRnn(env.observation_space.shape)
         self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.LEARNING_RATE) #weight_decay = 1e-5
         
         self.beta = cfg.ENTROPY_BETA
         self.clip = cfg.CLIP
         
-        self.net_old = Net(env.observation_space.shape[0])
+        
         self.net_old.load_state_dict(self.net.state_dict())
         
         self.epochs = cfg.EPOCHS
