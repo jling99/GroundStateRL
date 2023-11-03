@@ -32,7 +32,7 @@ if __name__ == "__main__":
     print(env.observation_space.shape)
     buffer = ExperienceBuffer(cfg.REPLAY_SIZE)
 
-    agent = Agent(env, buffer, type = cfg.net)
+    agent = Agent(env, buffer, recurrent=cfg.rec)
     energy_mem = list()
     i = 0
     for game in range(cfg.N_GAMES+1):
