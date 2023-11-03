@@ -5,6 +5,9 @@ class CFG():
         self.CONV_SPIN_KERNEL = 64
         self.CONV_REP_KERNEL = 64
         
+        self.SIZE_SPIN_KERNEL = 4
+        self.SIZE_REP_KERNEL = 4
+        
         self.DENSE_HIDDEN = 64
         self.DROPOUT_RATE = .2
         self.LSTM_SIZE = 64
