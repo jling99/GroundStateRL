@@ -108,3 +108,96 @@ class SpinEnv(gym.Env):
         
         return all_en
     
+    
+    
+class SpinEnvDis(gym.Env):
+    
+    def __init__(self, ham, size=16, steps = 500):
+        self.size = size
+        self.action_space = spaces.MultiDiscrete([2 for _ in range(self.size)])
+        self.observation_space = spaces.Box(low=-1, high=1, shape=(self.size, 1))
+        self.links = ham[0] #dict of (neighb, couple)
+        self.all_links = ham[1]
+        self.stop = steps
+        self.sweeps = int(size*0.5)
+
+        
+    def _get_obs(self):
+        return self.lattice  
+    
+    def _get_info(self):
+        return {
+                'min_enery' : -self.site_rel_energy.sum(),
+                'step' : self.steps}
+        
+    def reset(self):
+        self.lattice = self.init_lattice()
+
+        self.site_rel_energy = self.calc_rel_energy()
+        self.site_energy = self.calc_energy()
+        self.steps = 0
+        self.flips = 0
+        
+        return self._get_obs()
+
+    def step(self, action):
+
+        self.sweep(action)
+            
+        self.steps +=1
+        observation = self._get_obs()
+        self.site_rel_energy = self.calc_rel_energy()
+        reward = -self.site_rel_energy.sum()
+        done = False
+        info = self._get_info()
+        if observation.sum()==self.size : 
+            reward*=(self.stop/self.steps)
+        
+        if self.steps >= self.stop:
+            done = True
+            reward-=(self.size*self.stop)//10
+
+        return observation, reward, done, False, info              
+    
+    def flip(self,  site):
+        self.lattice[site] *=-1
+        self.site_energy = self.calc_energy()
+
+    def sweep(self, action):
+        for i in range(len(action)):
+            if action[i] == 1 :
+                self.flip(i)
+                
+
+    def init_lattice(self):
+        return np.random.choice([-1,1],self.size)
+    
+    
+    def calc_rel_energy(self):
+        
+        all_en = np.zeros((self.size))
+        for k,v in self.links.items():
+            en = 0
+            if len(v)>0:
+                for c in v :
+                    if k == c[0]:
+                        en += self.lattice[k]*c[1]
+                    else : 
+                        en+= self.lattice[k]*c[1]*self.lattice[c[0]]
+            all_en[k] = -en
+        return all_en
+    
+    def calc_energy(self):
+        
+        all_en = np.zeros((self.size))
+        for k,v in self.all_links.items():
+            en = 0
+            if len(v)>0:
+                for c in v :
+                    if k == c[0]:
+                        en += self.lattice[k]*c[1]
+                    else : 
+                        en+= self.lattice[k]*c[1]*self.lattice[c[0]]
+            all_en[k] = -en
+
+        return all_en
