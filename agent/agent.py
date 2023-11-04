@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from agent.config import CFG
-from agent.buffer import Experience
+from agent.buffer import Experience, ExperienceDis
 
 cfg = CFG()
 
@@ -158,4 +158,94 @@ class Agent():
         b = torch.log(torch.sqrt(2*np.pi*std.clamp(min=0.1)))
         return a-b
         
+        
+class Net(nn.Module):
+    def __init__(self, input_shape, output_shape):
+        super(Net, self).__init__()
+
+        self.dense = nn.Linear(input_shape[0], (cfg.DEPTH+1)*cfg.DENSE_HIDDEN)
+        
+        self.hidden = [nn.Linear((i+1)*cfg.DENSE_HIDDEN , i*cfg.DENSE_HIDDEN ) for i in range(cfg.DEPTH,0,-1)]
+        
+        self.dist = nn.Linear(cfg.DENSE_HIDDEN, output_shape[0])
+        
+        self.value = nn.Linear(cfg.DENSE_HIDDEN, 1)
+        
+    def forward(self, x):
+        x = self.dense(x)
+        for i in self.hidden : 
+            x = F.relu(i(x))
+
+        return F.softmax(self.dist(x)), self.value(x)
+    
+class AgentDis():
+    def __init__(self, env, buffer, recurrent = True) -> None:
+        
+        self.env = env
+        self.buffer = buffer
+
+        self.net = Net(env.observation_space.shape, env.action_space.shape)
+        self.net_old = Net(env.observation_space.shape, env.action_space.shape)
+        
+        self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.LEARNING_RATE) #weight_decay = 1e-5
+        
+        self.beta = cfg.ENTROPY_BETA
+        self.clip = cfg.CLIP
+        
+        
+        self.net_old.load_state_dict(self.net.state_dict())
+        
+        self.epochs = cfg.EPOCHS
+        
+    def step(self, state, action, reward, done, next_state, info):
+            
+        exp = ExperienceDis(state, action, reward, done, next_state, info)
+        self.buffer.append(exp)
+        
+    def choose(self, state):
+        with torch.no_grad():
+            state_action, state_value = self.net(torch.tensor(state, dtype=torch.float32).unsqueeze(0))
+            state_action = state_action/state_action.sum()
+            state_action = np.asarray(state_action)
+            action_unit = np.random.choice([i for i in range(self.env.action_space.shape[0])], p = state_action.squeeze(0))
+        return [0 if i!= action_unit else 1 for i in range(self.env.action_space.shape[0])]
+
+    def learn(self):
+        with torch.no_grad():
+            states, actions, rewards, dones = self.buffer.sample(self.net)
+            states_v = torch.tensor(states, dtype=torch.float32)
+            actions_v = torch.tensor(actions, dtype=torch.float32)
+            rewards_v = torch.tensor(rewards, dtype=torch.float32)
+            
+            dones_v = torch.tensor(dones, dtype=torch.bool)
+            
+            state_old_p, state_old_val = self.net_old(states_v)
+            
+            old_logprobs = torch.log(state_old_p)
+            
+            advantages = (-state_old_val[dones_v].squeeze(-1)+rewards_v[dones_v]).unsqueeze(-1)
+
+        for _ in range(self.epochs):
+
+            state_action_prob, state_action_val = self.net(states_v)
+            
+            logprobs = torch.log(state_action_prob)
+            
+            with torch.no_grad():
+                ratios = torch.exp(logprobs - old_logprobs)[dones_v]
+
+                surr1 = ratios * advantages
+                surr2 = torch.clamp(ratios, 1-self.clip, 1+self.clip) * advantages
+                
+            loss_entropy = self.beta*(-state_action_prob*logprobs).mean()
+            
+            loss_policy_v = -torch.min(surr1, surr2) + nn.MSELoss()(state_action_val.squeeze(-1), rewards_v) 
+            
+            loss = loss_entropy + loss_policy_v 
+
+            self.optimizer.zero_grad()
+            loss.mean().backward()
+            self.optimizer.step()
+            
+        self.net_old.load_state_dict(self.net.state_dict())
         

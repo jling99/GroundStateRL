@@ -10,9 +10,9 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from agent.config import CFG
-from agent.buffer import Experience, ExperienceBuffer
-from agent.agent import NetRnn, NetConv, Agent
-from environment.env import SpinEnv
+from agent.buffer import ExperienceDis, ExperienceBufferDis
+from agent.agent import NetRnn, NetConv, AgentDis, Net
+from environment.env import SpinEnvDis
 from ham.ham import random_hamiltonian, random_ferro_hamiltonian
 
 import time
@@ -22,47 +22,63 @@ cfg = CFG()
 
 size = 16
 reps = 1
-steps = 1e3
+steps = 1e4
 
 if __name__ == "__main__":
     
     hamiltonian = random_ferro_hamiltonian(size)
     #print(hamiltonian[0])
-    env = SpinEnv(hamiltonian, size=size, reps=reps, steps = steps)
+    print(hamiltonian)
+    env = SpinEnvDis(hamiltonian, size=size, steps = steps)
     print(env.observation_space.shape)
-    buffer = ExperienceBuffer(cfg.REPLAY_SIZE)
+    buffer = ExperienceBufferDis(cfg.REPLAY_SIZE)
 
-    agent = Agent(env, buffer, recurrent=cfg.rec)
+    agent = AgentDis(env, buffer, recurrent=cfg.rec)
     energy_mem = list()
     i = 0
     for game in range(cfg.N_GAMES+1):
-        env = SpinEnv(hamiltonian, size=size, reps=reps)
+        env = SpinEnvDis(hamiltonian, size=size, steps=steps)
         done = False
         observation = env.reset()
         game_actions = [] 
+        game_obs = list()
+        game_next=list()
+        game_info=list()
         start_time = time.time()
+        r = []
+        game_d=list()
         print('start', game)
         while (not done):
             action = agent.choose(observation)
-            #action = np.random.normal()/10
+
             next_observation, reward, done, _, info = env.step(action)
-
-            agent.step(observation, action, reward,done, next_observation,info)
-            
+            r.append(reward)
+            game_obs.append(observation)
+            game_next.append(next_observation)
+            game_info.append(info)
             game_actions.append(action)
+            game_d.append(done)
             observation = next_observation
-
+            if observation.sum() == size : 
+                print('Yes', observation)
+                for i in range(len(r)):
+                    agent.step(game_obs[i], game_actions[i], r[i],game_d[i], game_next[i],game_info[i])
+                done = True
             if done: 
                 energy_mem.append(reward)
-                print("done", time.time()-start_time, reward, env.flips)
+                print("done", time.time()-start_time, reward, env.steps)
                 env.close()
 
         if (game % cfg.SYNC == 0) & (game!=0):
             i+=1
             start_time = time.time()
-            agent.learn()
+            try : 
+                agent.learn()
+                print('Sync', time.time()-start_time, reward)
+            except : 
+                print('No learning')
             #torch.save(agent.net.state_dict(), f'models/{size}-{reps}-{i}.pt')
-            print('Sync', time.time()-start_time)
+            
             print(observation)
     
     plt.figure()
@@ -71,7 +87,7 @@ if __name__ == "__main__":
     
     print('TEST')
     fer = random_ferro_hamiltonian(size)
-    env_test = SpinEnv(fer, size=size, reps=reps, steps=steps)
+    env_test = SpinEnvDis(fer, size=size, steps=steps)
     done = False
     observation = env_test.reset()
     game_actions = [] 
@@ -88,6 +104,6 @@ if __name__ == "__main__":
 
         if done: 
             energy_mem.append(reward)
-            print("done", time.time()-start_time, reward, env_test.flips)
+            print("done", time.time()-start_time, reward, env_test.steps)
             env_test.close()
             print(observation)
